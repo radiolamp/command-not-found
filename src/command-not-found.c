@@ -6,11 +6,15 @@
 #include <wchar.h>
 #include <wctype.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <time.h>
 
 #define _(string) gettext(string)
 
 #define MAX_CMD_LEN 512
 #define MAX_INPUT_LEN 100
+#define CACHE_FILE "/tmp/apt_cache_descriptions.txt"
+#define CACHE_MAX_AGE 86400
 
 typedef struct {
     const char *ru_char;
@@ -142,13 +146,199 @@ int command_exists_in_system_bin(const char *cmd) {
     return 0;
 }
 
+int package_is_installed(const char *package_name) {
+    char cmd[MAX_CMD_LEN];
+    snprintf(cmd, sizeof(cmd), "rpm -q %s >/dev/null 2>&1", package_name);
+    return system(cmd) == 0;
+}
+
+int cache_is_valid() {
+    struct stat st;
+    if (stat(CACHE_FILE, &st) != 0) {
+        return 0;
+    }
+    
+    time_t now = time(NULL);
+    time_t file_age = now - st.st_mtime;
+    
+    return (file_age < CACHE_MAX_AGE);
+}
+
+void create_cache() {
+    printf("Creating apt-cache database... (this may take a moment)\n");
+    char cmd[MAX_CMD_LEN];
+    snprintf(cmd, sizeof(cmd), "apt-cache search . > %s 2>/dev/null", CACHE_FILE);
+    int result = system(cmd);
+    if (result == 0) {
+        printf("Cache created successfully at %s\n", CACHE_FILE);
+    } else {
+        printf("Failed to create cache. Please check if apt-cache is available.\n");
+    }
+}
+
+void force_recreate_cache() {
+    printf("Forcing cache recreation...\n");
+    unlink(CACHE_FILE);
+    create_cache();
+}
+
+int search_exact_package(const char *package_name, char *result, size_t result_size) {
+    if (!cache_is_valid()) {
+        create_cache();
+    }
+    
+    FILE *fp = fopen(CACHE_FILE, "r");
+    if (!fp) {
+        return 0;
+    }
+    
+    char line[MAX_CMD_LEN];
+    int found = 0;
+    
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        size_t name_len = strlen(package_name);
+        if (strncmp(line, package_name, name_len) == 0) {
+            char next_char = line[name_len];
+            if (next_char == ' ' || next_char == '\t' || next_char == '\n' || next_char == '\0') {
+                strncpy(result, line, result_size - 1);
+                result[result_size - 1] = '\0';
+                found = 1;
+                break;
+            }
+        }
+    }
+    
+    fclose(fp);
+    return found;
+}
+
+int search_similar_in_cache(const char *pattern, char *results[], int max_results) {
+    if (!cache_is_valid()) {
+        create_cache();
+    }
+    
+    FILE *fp = fopen(CACHE_FILE, "r");
+    if (!fp) {
+        return 0;
+    }
+
+    char *all_results[100];
+    int all_count = 0;
+    char line[MAX_CMD_LEN];
+    
+    while (fgets(line, sizeof(line), fp) != NULL && all_count < 100) {
+        char *first_space = strchr(line, ' ');
+        if (first_space != NULL) {
+            size_t package_name_len = first_space - line;
+            char package_name[256];
+            
+            if (package_name_len >= sizeof(package_name)) {
+                package_name_len = sizeof(package_name) - 1;
+            }
+            
+            strncpy(package_name, line, package_name_len);
+            package_name[package_name_len] = '\0';
+
+            if (strstr(package_name, pattern) != NULL) {
+                all_results[all_count] = strdup(line);
+                if (all_results[all_count] == NULL) break;
+                all_count++;
+            }
+        }
+    }
+    
+    fclose(fp);
+    
+    if (all_count == 0) {
+        return 0;
+    }
+
+    for (int i = 0; i < all_count - 1; i++) {
+        for (int j = i + 1; j < all_count; j++) {
+            char *first_space_i = strchr(all_results[i], ' ');
+            char *first_space_j = strchr(all_results[j], ' ');
+            
+            if (first_space_i != NULL && first_space_j != NULL) {
+                size_t len_i = first_space_i - all_results[i];
+                size_t len_j = first_space_j - all_results[j];
+
+                if (len_i > len_j) {
+                    char *temp = all_results[i];
+                    all_results[i] = all_results[j];
+                    all_results[j] = temp;
+                }
+            }
+        }
+    }
+
+    int count = (all_count < max_results) ? all_count : max_results;
+    for (int i = 0; i < count; i++) {
+        results[i] = all_results[i];
+    }
+
+    for (int i = count; i < all_count; i++) {
+        free(all_results[i]);
+    }
+    
+    return count;
+}
+
+void print_usage() {
+    printf("Usage:\n");
+    printf("  command-not-found <command>    - Search for a command and suggest packages\n");
+    printf("  command-not-found --rebase     - Force recreate the apt-cache database\n");
+    printf("  command-not-found --help       - Show this help message\n");
+}
+
+int check_exfatprogs_installed() {
+    FILE *fp = popen("rpm -q exfatprogs 2>/dev/null", "r");
+    if (fp == NULL) {
+        return 0;
+    }
+    
+    char output[256];
+    if (fgets(output, sizeof(output), fp) != NULL) {
+        // Remove newline character
+        output[strcspn(output, "\n")] = 0;
+        
+        // Check if output contains "exfatprogs-" (package is installed)
+        if (strstr(output, "exfatprogs-") != NULL) {
+            printf("Пакет exfatprogs уже установлен: %s\n", output);
+            pclose(fp);
+            return 1;
+        }
+    }
+    
+    pclose(fp);
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     setlocale(LC_ALL, "");
     setlocale(LC_MESSAGES, "");
 
     bindtextdomain("command-not-found", "/usr/share/locale/");
     textdomain("command-not-found");
-    if (argc < 2) return 1;
+    
+    if (argc == 2) {
+        if (strcmp(argv[1], "--rebase") == 0 || strcmp(argv[1], "-r") == 0) {
+            force_recreate_cache();
+            return 0;
+        }
+        else if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
+            print_usage();
+            return 0;
+        }
+        else if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0) {
+            printf("command-not-found with cache optimization\n");
+            return 0;
+        }
+    }
+    
+    if (argc < 2) {
+        print_usage();
+        return 1;
+    }
 
     if (strlen(argv[1]) > MAX_INPUT_LEN) {
         fprintf(stderr, "Input command too long\n");
@@ -191,71 +381,61 @@ int main(int argc, char *argv[]) {
         return 127;
     }
 
+    // Check if exfatprogs is installed and the command is exfatprogs
+    if (strcmp(original_cmd, "exfatprogs") == 0 && check_exfatprogs_installed()) {
+        // Only show the message about exfatprogs being installed and exit
+        return 127;
+    }
+
     printf("%s: %s\n", original_cmd, _("Command not found"));
     fflush(stdout);
 
-    char cmd[MAX_CMD_LEN];
     char output[MAX_CMD_LEN];
-    FILE *fp;
     int found = 0;
 
-    if (safe_snprintf(cmd, sizeof(cmd), "apt-cache search '^%s$' 2>/dev/null", converted_cmd) >= (int)sizeof(cmd)) {
-        fprintf(stderr, "Command too long\n");
-        return 1;
-    }
-
-    fp = popen(cmd, "r");
-    if (fp != NULL) {
-        if (fgets(output, sizeof(output), fp) != NULL) {
-            char *dash_pos = strchr(output, '-');
-            if (dash_pos != NULL) {
-                size_t package_len = dash_pos - output;
-                char package_name[256];
-                
-                if (package_len >= sizeof(package_name)) {
-                    package_len = sizeof(package_name) - 1;
-                }
-                
-                strncpy(package_name, output, package_len);
-                package_name[package_len] = '\0';
-
-                char *end = package_name + strlen(package_name) - 1;
-                while (end > package_name && (*end == ' ' || *end == '\t' || *end == '\n')) {
-                    *end = '\0';
-                    end--;
-                }
-                
-                printf("sudo apt-get install %s\n", package_name);
-                found = 1;
+    if (search_exact_package(converted_cmd, output, sizeof(output))) {
+        char *first_space = strchr(output, ' ');
+        if (first_space != NULL) {
+            size_t package_len = first_space - output;
+            char package_name[256];
+            
+            if (package_len >= sizeof(package_name)) {
+                package_len = sizeof(package_name) - 1;
             }
+            
+            strncpy(package_name, output, package_len);
+            package_name[package_len] = '\0';
+
+            char *end = package_name + strlen(package_name) - 1;
+            while (end > package_name && (*end == ' ' || *end == '\t' || *end == '\n')) {
+                *end = '\0';
+                end--;
+            }
+            
+            if (package_is_installed(package_name)) {
+                printf("Package '%s' is already installed but command '%s' not found.\n", package_name, original_cmd);
+                printf("The command may be in a different package or have a different name.\n");
+                printf("Try: rpm -ql %s | grep bin/\n", package_name);
+            } else {
+                printf("sudo apt-get install %s\n", package_name);
+            }
+            found = 1;
         }
-        pclose(fp);
     }
 
     if (!found) {
         printf("%s\n", _("Perhaps you were looking for:"));
         
-        if (safe_snprintf(cmd, sizeof(cmd), 
-            "apt-cache search '(/(bin|sbin)|/usr/(sbin|bin))/%s' 2>/dev/null | head -3", 
-            converted_cmd) >= (int)sizeof(cmd)) {
-            printf("Try: apt-cache search %s\n", converted_cmd);
-        } else {
-            fp = popen(cmd, "r");
-            
-            if (fp != NULL) {
-                int count = 0;
-                while (fgets(output, sizeof(output), fp) != NULL && count < 3) {
-                    printf("%s", output);
-                    count++;
-                }
-                pclose(fp);
-                
-                if (count == 0) {
-                    printf("Try: apt-cache search %s\n", converted_cmd);
-                }
-            } else {
-                printf("Try: apt-cache search %s\n", converted_cmd);
+        char *results[3];
+        int result_count = search_similar_in_cache(converted_cmd, results, 3);
+        
+        if (result_count > 0) {
+            for (int i = 0; i < result_count; i++) {
+                printf("%s", results[i]);
+                free(results[i]);
             }
+        } else {
+            printf("Try: apt-cache search %s\n", converted_cmd);
         }
     }
 
