@@ -1,8 +1,19 @@
+#: src/command-not-found.c:183
+msgid "Command found in system directories but not in your PATH"
+msgstr "Команда найдена в системных каталогах, но отсутствует в вашем PATH"
+
+#: src/command-not-found.c:184 src/command-not-found.c:190
+msgid "Try running with sudo:"
+msgstr "Попробуйте запустить с sudo:"
+
+#: src/command-not-found.c:189
+msgid "Did you mean"
+msgstr "Возможно, вы имели в виду"
+
+#: src/command-not-found.c:194
 msgid "Command not found"
 msgstr "Команда не найдена"
 
+#: src/command-not-found.c:236
 msgid "Perhaps you were looking for:"
-msgstr "Возможно вы искали:"
-
-msgid "Did you mean"
-msgstr "Вы имели в виду"
+msgstr "Возможно, вы искали:"
