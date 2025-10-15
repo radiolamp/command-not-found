@@ -36,3 +36,6 @@ msgstr ""
 #: src/command-not-found.c:236
 msgid "Perhaps you were looking for:"
 msgstr ""
+
+msgid "Package is already installed but command not found."
+msgstr ""
