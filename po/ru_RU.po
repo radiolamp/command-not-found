@@ -1,0 +1,8 @@
+msgid "Command not found"
+msgstr "Команда не найдена"
+
+msgid "Perhaps you were looking for:"
+msgstr "Возможно вы искали:"
+
+msgid "Did you mean"
+msgstr "Вы имели в виду"
