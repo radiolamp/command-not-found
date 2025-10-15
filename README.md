@@ -1,6 +1,7 @@
 # command-not-found
-command-not-found alt
+Данная программа является ассистентом консоли предназначенной для Alt Linux
 
 ```shell
-meson setup build --prefix=/usr && sudo ninja install -C build
+meson setup build
+sudo ninja install -C build
 ```
