@@ -1,4 +1,4 @@
-project('command-not-found', 'c')
+project('command-not-found', 'c', default_options: ['prefix=/usr'])
 
 # Добавляем зависимости
 i18n = import('i18n')

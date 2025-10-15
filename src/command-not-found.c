@@ -117,6 +117,31 @@ int command_exists_in_path(const char *cmd) {
     return found;
 }
 
+int command_exists_in_system_bin(const char *cmd) {
+    const char *system_dirs[] = {
+        "/bin", "/sbin", "/usr/bin", "/usr/sbin", 
+        "/usr/local/bin", "/usr/local/sbin", NULL
+    };
+    
+    for (int i = 0; system_dirs[i] != NULL; i++) {
+        char full_path[MAX_CMD_LEN];
+        snprintf(full_path, sizeof(full_path), "%s/%s", system_dirs[i], cmd);
+        
+        if (access(full_path, F_OK) == 0) {
+            return 1;
+        }
+    }
+
+    char cmd_which[MAX_CMD_LEN];
+    snprintf(cmd_which, sizeof(cmd_which), "which %s >/dev/null 2>&1", cmd);
+    
+    if (system(cmd_which) == 0) {
+        return 1;
+    }
+    
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     setlocale(LC_ALL, "");
     setlocale(LC_MESSAGES, "");
@@ -139,15 +164,12 @@ int main(int argc, char *argv[]) {
     original_cmd[MAX_INPUT_LEN] = '\0';
     
     convert_command(converted_cmd);
-
     if (strcmp(original_cmd, converted_cmd) != 0) {
         if (command_exists_in_path(converted_cmd)) {
             printf("Auto-correcting '%s' to '%s' and executing:\n", original_cmd, converted_cmd);
             execlp(converted_cmd, converted_cmd, NULL);
             perror("exec failed");
             return 1;
-        } else {
-            printf("%s '%s'? ", _("Did you mean"), converted_cmd);
         }
     }
 
@@ -155,6 +177,18 @@ int main(int argc, char *argv[]) {
         execlp(original_cmd, original_cmd, NULL);
         perror("exec failed");
         return 1;
+    }
+
+    if (command_exists_in_system_bin(original_cmd)) {
+        printf("%s: %s\n", original_cmd, _("Command found in system directories but not in your PATH"));
+        printf("%s 'sudo %s'\n", _("Try running with sudo:"), original_cmd);
+        return 127;
+    }
+
+    if (strcmp(original_cmd, converted_cmd) != 0 && command_exists_in_system_bin(converted_cmd)) {
+        printf("%s '%s'?\n", _("Did you mean"), converted_cmd);
+        printf("%s 'sudo %s'\n", _("Try running with sudo:"), converted_cmd);
+        return 127;
     }
 
     printf("%s: %s\n", original_cmd, _("Command not found"));
