@@ -18,3 +18,7 @@ install_data('src/shell/bash/command-not-found.sh',
 # Fish поддержка  
 install_data('src/shell/fish/command-not-found.fish',
   install_dir: '/etc/fish/conf.d')
+
+# Zsh поддержка  
+install_data('src/shell/zsh/command-not-found.zsh',
+  install_dir: '/etc/zshrc.d')
